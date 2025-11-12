@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Asset Beheer Viewer</title>
+  <style>
+    body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial;margin:0;padding:20px;background:#fff;color:#111}
+    .container{max-width:820px;margin:18px auto}
+    .card{border:1px solid #e6e6e6;border-radius:10px;padding:18px}
+    h1{margin:0 0 8px;font-size:20px}
+    .meta{color:#666;margin-bottom:12px}
+    .grid{display:grid;grid-template-columns:1fr 180px;gap:12px}
+    .field{padding:8px 0;border-bottom:1px dashed #f1f1f1}
+    .label{font-weight:600}
+    .value{margin-top:4px}
+    .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+    button{padding:8px 10px;border-radius:8px;border:1px solid #ccc;background:#f7f7f7;cursor:pointer}
+    pre{background:#fafafa;padding:10px;border-radius:6px;overflow:auto}
+    .muted{color:#666;font-size:14px}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <h1>Asset Beheer</h1>
+      <div class="meta" id="meta"></div>
+      <div id="fields"></div>
+      <div class="actions">
+        <button id="downloadJson">Download JSON</button>
+        <button id="backBtn">Terug naar Asset Manager</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // read ?data= param (URI-encoded JSON) or fragment
+    function readParam(name){
+      const params = new URLSearchParams(window.location.search);
+      return params.get(name);
+    }
+
+    function safeParse(json){ try{return JSON.parse(json);} catch(e){return null;} }
+
+    function render(record){
+      const meta = document.getElementById('meta');
+      const fieldsEl = document.getElementById('fields');
+      if(!record){ meta.innerHTML = '<span class="muted">Geen of ongeldige data gevonden in de URL.</span>'; fieldsEl.innerHTML=''; return; }
+      meta.textContent = `ID: ${record._id || record.id || '(geen id)'}`;
+      // show all keys
+      fieldsEl.innerHTML = '';
+      // prefer schema-like order if present
+      const keys = Object.keys(record).filter(k=>!['_id','id','created','modified'].includes(k));
+      // if record has nested simple fields (like earlier format), handle
+      if(record.fields && Array.isArray(record.fields)){
+        record.fields.forEach(f=>{
+          const d = document.createElement('div'); d.className='field'; d.innerHTML = `<div class="label">${escapeHtml(f.name||'')}</div><div class="value">${escapeHtml(f.value||'')}</div>`; fieldsEl.appendChild(d);
+        });
+      } else {
+        // show properties
+        // show created/modified first if present
+        if(record.created){ const d = document.createElement('div'); d.className='field'; d.innerHTML = `<div class="label">Aangemaakt</div><div class="value">${escapeHtml(record.created)}</div>`; fieldsEl.appendChild(d); }
+        keys.forEach(k=>{
+          const d = document.createElement('div'); d.className='field'; d.innerHTML = `<div class="label">${escapeHtml(k)}</div><div class="value">${escapeHtml(String(record[k]||''))}</div>`; fieldsEl.appendChild(d);
+        });
+        if(record.modified){ const d = document.createElement('div'); d.className='field'; d.innerHTML = `<div class="label">Aangepast</div><div class="value">${escapeHtml(record.modified)}</div>`; fieldsEl.appendChild(d); }
+      }
+    }
+
+    function escapeHtml(s){ return (s+'').replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+
+    // get data
+    let raw = readParam('data') || window.location.hash.slice(1);
+    if(raw && raw.startsWith('data=')) raw = raw.slice(5);
+    let record = null;
+    if(raw){
+      try{
+        const decoded = decodeURIComponent(raw);
+        record = safeParse(decoded);
+      } catch(e){ record = safeParse(raw); }
+    }
+
+    render(record);
+
+    document.getElementById('downloadJson').onclick = ()=>{
+      if(!record){ alert('Geen data om te downloaden.'); return; }
+      const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(record,null,2)],{type:'application/json'})); a.download = (record._id||record.id||'asset')+'.json'; a.click();
+    };
+
+    document.getElementById('backBtn').onclick = ()=>{
+      // try go back, otherwise open root
+      if(document.referrer) window.history.back(); else window.location.href = './';
+    };
+  </script>
+</body>
+</html>
