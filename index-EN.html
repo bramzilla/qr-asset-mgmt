@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Simple Asset Manager (Local HTML/JS)</title>
+  <style>
+    :root{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,\"Helvetica Neue\",Arial;margin:0;padding:0}
+    body{max-width:1100px;margin:24px auto;padding:20px}
+    h1{font-size:20px;margin:0 0 8px}
+    p.lead{margin:0 0 18px;color:#444}
+    .grid{display:grid;grid-template-columns:1fr 380px;gap:18px}
+    .card{border:1px solid #ddd;padding:12px;border-radius:8px}
+    label{display:block;margin-top:8px;font-size:13px}
+    input[type=text], textarea, select{width:100%;padding:8px;margin-top:6px;border:1px solid #ccc;border-radius:6px}
+    .controls{display:flex;gap:8px;margin-top:10px}
+    button{padding:8px 10px;border-radius:6px;border:1px solid #888;background:#f7f7f7;cursor:pointer}
+    button.primary{background:#111;color:#fff;border-color:#111}
+    .small{font-size:12px;padding:6px 8px}
+    .field-row{display:flex;gap:8px;align-items:center}
+    .field-row input{flex:1}
+    .list{max-height:420px;overflow:auto;margin-top:12px}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:6px;border-bottom:1px solid #eee;font-size:13px}
+    .qr-wrap{display:flex;flex-direction:column;align-items:center;gap:8px}
+    .muted{color:#666;font-size:13px}
+    .inline{display:inline-block}
+    .topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+    .notice{background:#fffbeb;border:1px solid #f5e1a8;padding:8px;border-radius:6px;margin-bottom:12px}
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div>
+      <h1>Simple Asset Manager — Local HTML/JS</h1>
+      <p class="lead">Create dynamic forms, save assets to localStorage or download CSV/JSON, generate QR codes. No server required.</p>
+    </div>
+    <div class="muted">Tip: open this file in your browser. Data is stored in your browser's <strong>localStorage</strong> and can be exported/imported.</div>
+  </div>
+
+  <div class="grid">
+    <div>
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <strong>Asset Form</strong>
+          <div class="muted">Record ID: <span id="currentId">(new)</span></div>
+        </div>
+
+        <div id="formFields">
+          <!-- dynamic fields injected here -->
+        </div>
+
+        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+          <button id="addFieldBtn" class="small">+ Add custom field</button>
+          <button id="saveAssetBtn" class="primary">Save asset</button>
+          <button id="clearFormBtn" class="small">Clear form</button>
+          <label class="small inline" style="margin-left:8px"><input id="embedInQR" type="checkbox"/> Embed full data in QR</label>
+        </div>
+
+        <hr/>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button id="exportCSV" class="small">Export CSV</button>
+          <button id="exportJSON" class="small">Export JSON</button>
+          <input id="importFile" type="file" accept="application/json,text/csv" style="display:inline-block" />
+        </div>
+
+      </div>
+
+      <div class="card" style="margin-top:12px">
+        <strong>Assets</strong>
+        <div class="list" id="assetsList"></div>
+      </div>
+
+    </div>
+
+    <div>
+      <div class="card">
+        <strong>QR / Preview</strong>
+        <div class="qr-wrap" style="margin-top:10px">
+          <canvas id="qrcanvas"></canvas>
+          <div class="muted">Scan the QR to view or retrieve the asset. You can choose to embed full data directly in the QR or only a short asset reference (<code>asset://&lt;id&gt;</code>). Use the buttons below to export the asset JSON or download the QR image.</div>
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <button id="downloadQR" class="small">Download QR PNG</button>
+            <button id="downloadAssetJSON" class="small">Download asset JSON</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:12px">
+        <strong>Instructions</strong>
+        <ol style="padding-left:18px">
+          <li>Create fields with <em>+ Add custom field</em> or edit defaults.</li>
+          <li>Save an asset. Data will be stored in your browser (localStorage).</li>
+          <li>Export CSV/JSON for backups or import later.</li>
+          <li>QR code can embed data (portable) or be a short reference you can resolve later by hosting the JSON file and linking to it.</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+
+  <!-- Dependencies -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+  <script>
+    // Simple local asset manager (single-file, localStorage-backed)
+    const DEFAULT_FIELDS = [
+      {key:'name', label:'Asset name'},
+      {key:'serial', label:'Serial / identifier'},
+      {key:'location', label:'Location'},
+      {key:'owner', label:'Owner / custodian'},
+      {key:'notes', label:'Notes', type:'textarea'}
+    ];
+
+    // Utilities
+    const uid = ()=> 'a'+Date.now().toString(36)+Math.random().toString(36).slice(2,8);
+    const DB_KEY = 'assets_db_v1';
+
+    // State
+    let schema = JSON.parse(localStorage.getItem('assets_schema_v1')||'null') || DEFAULT_FIELDS.slice();
+    let db = JSON.parse(localStorage.getItem(DB_KEY) || '[]');
+    let currentEditingId = null;
+
+    // Elements
+    const formFieldsEl = document.getElementById('formFields');
+    const assetsListEl = document.getElementById('assetsList');
+    const currentIdEl = document.getElementById('currentId');
+    const embedInQR = document.getElementById('embedInQR');
+    const qrcanvas = document.getElementById('qrcanvas');
+
+    function renderForm(){
+      formFieldsEl.innerHTML = '';
+      schema.forEach((f, idx)=>{
+        const row = document.createElement('div');
+        row.className = 'field-row';
+        const id = 'field_'+idx;
+        const label = document.createElement('label');
+        label.htmlFor = id;
+        label.textContent = f.label || f.key;
+
+        let input;
+        if(f.type === 'textarea'){
+          input = document.createElement('textarea');
+          input.rows = 3;
+        } else {
+          input = document.createElement('input');
+          input.type = 'text';
+        }
+        input.id = id;
+        input.dataset.key = f.key;
+        input.placeholder = f.label || f.key;
+
+        const del = document.createElement('button');
+        del.textContent = '✕';
+        del.className = 'small';
+        del.style.height = '34px';
+        del.onclick = ()=>{
+          if(confirm('Remove field "'+(f.label||f.key)+'"?')){
+            schema.splice(idx,1); saveSchema(); renderForm();
+          }
+        };
+
+        const meta = document.createElement('div');
+        meta.style.flex='1';
+        meta.appendChild(label);
+        meta.appendChild(input);
+        row.appendChild(meta);
+        row.appendChild(del);
+        formFieldsEl.appendChild(row);
+      });
+    }
+
+    function saveSchema(){
+      localStorage.setItem('assets_schema_v1', JSON.stringify(schema));
+    }
+
+    function readForm(){
+      const obj = {};
+      formFieldsEl.querySelectorAll('input,textarea').forEach(i=>{
+        obj[i.dataset.key] = i.value || '';
+      });
+      return obj;
+    }
+
+    function populateForm(data){
+      formFieldsEl.querySelectorAll('input,textarea').forEach(i=>{
+        i.value = data[i.dataset.key] || '';
+      });
+    }
+
+    function saveDB(){
+      localStorage.setItem(DB_KEY, JSON.stringify(db));
+    }
+
+    function addDefaultValues(record){
+      schema.forEach(f=>{ if(!(f.key in record)) record[f.key]=''; });
+      return record;
+    }
+
+    function saveAsset(){
+      const data = readForm();
+      if(!data.name && !data.serial){
+        if(!confirm('No name or serial entered. Save anyway?')) return;
+      }
+      if(currentEditingId){
+        const idx = db.findIndex(r=>r._id===currentEditingId);
+        if(idx>=0){ db[idx] = Object.assign(db[idx], data); db[idx].modified = new Date().toISOString(); }
+      } else {
+        const record = addDefaultValues(Object.assign({}, data));
+        record._id = uid(); record.created = new Date().toISOString();
+        db.push(record);
+        currentEditingId = record._id;
+      }
+      saveDB();
+      renderList();
+      currentIdEl.textContent = currentEditingId || '(new)';
+      renderQRForCurrent();
+      alert('Saved. (also stored in browser localStorage)');
+    }
+
+    function renderList(){
+      if(db.length===0){ assetsListEl.innerHTML = '<div class="muted">No assets yet.</div>'; return; }
+      const table = document.createElement('table');
+      const thead = document.createElement('thead');
+      thead.innerHTML = '<tr><th>ID</th><th>Name</th><th>Serial</th><th>Actions</th></tr>';
+      table.appendChild(thead);
+      const tbody = document.createElement('tbody');
+      db.slice().reverse().forEach(r=>{
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td style="font-family:monospace">${r._id}</td><td>${escapeHtml(r.name||'—')}</td><td>${escapeHtml(r.serial||'—')}</td>`;
+        const actionsTd = document.createElement('td');
+        const viewBtn = document.createElement('button'); viewBtn.textContent='View'; viewBtn.className='small';
+        viewBtn.onclick = ()=>{ currentEditingId = r._id; populateForm(r); currentIdEl.textContent = currentEditingId; renderQRForCurrent(); };
+        const editBtn = document.createElement('button'); editBtn.textContent='Edit'; editBtn.className='small'; editBtn.onclick=viewBtn.onclick;
+        const delBtn = document.createElement('button'); delBtn.textContent='Delete'; delBtn.className='small'; delBtn.onclick = ()=>{ if(confirm('Delete asset?')){ db = db.filter(x=>x._id!==r._id); saveDB(); renderList(); if(currentEditingId===r._id){ currentEditingId=null; currentIdEl.textContent='(new)'; renderForm(); } } };
+        const qrBtn = document.createElement('button'); qrBtn.textContent='Make QR'; qrBtn.className='small'; qrBtn.onclick = ()=>{ currentEditingId = r._id; populateForm(r); currentIdEl.textContent = currentEditingId; renderQRForCurrent(); };
+        actionsTd.appendChild(viewBtn); actionsTd.appendChild(qrBtn); actionsTd.appendChild(delBtn);
+        tr.appendChild(actionsTd);
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      assetsListEl.innerHTML=''; assetsListEl.appendChild(table);
+    }
+
+    function escapeHtml(s){ return (s+'').replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+
+    function renderQRForCurrent(){
+      const canvas = qrcanvas;
+      canvas.width = 256; canvas.height = 256;
+      const ctx = canvas.getContext('2d'); ctx.clearRect(0,0,canvas.width,canvas.height);
+      if(!currentEditingId){ // nothing
+        ctx.fillStyle='#f3f3f3'; ctx.fillRect(0,0,canvas.width,canvas.height);
+        return;
+      }
+      const record = db.find(r=>r._id===currentEditingId) || addDefaultValues(readForm());
+      const shouldEmbed = embedInQR.checked;
+      let payload;
+      if(shouldEmbed){ payload = JSON.stringify(record); }
+      else { payload = `asset://${record._id}`; }
+
+      // use QRCode lib by creating temporary div and drawing to canvas
+      const tmp = document.createElement('div');
+      new QRCode(tmp, {text:payload, width:256, height:256, correctLevel:QRCode.CorrectLevel.M});
+      // the library creates an img inside tmp; draw that on canvas
+      setTimeout(()=>{
+        const img = tmp.querySelector('img');
+        if(img){ ctx.drawImage(img,0,0); } else {
+          // fallback: library might draw table, so try transform
+          const table = tmp.querySelector('table');
+          if(table){
+            // convert to dataURL by serializing
+            const s = new XMLSerializer().serializeToString(table);
+            const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='256' height='256'><foreignObject width='100%' height='100%'>${s}</foreignObject></svg>`;
+            const img2 = new Image(); img2.onload = ()=>ctx.drawImage(img2,0,0); img2.src = 'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg);
+          }
+        }
+      },100);
+    }
+
+    // Download helpers
+    function download(filename, text){
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([text], {type:'text/plain'}));
+      a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+    }
+
+    function exportCSV(){
+      if(db.length===0){ alert('No assets to export'); return; }
+      // columns: schema keys + _id,created,modified
+      const cols = schema.map(s=>s.key).concat(['_id','created','modified']);
+      const lines = [cols.join(',')];
+      db.forEach(r=>{
+        const row = cols.map(c=>escapeCsv((r[c]||'')+''));
+        lines.push(row.join(','));
+      });
+      download('assets_export.csv', lines.join('\n'));
+    }
+
+    function escapeCsv(s){ if(s==null) return ''; if(s.indexOf(',')>=0 || s.indexOf('\n')>=0 || s.indexOf('"')>=0) return '"'+s.replace(/"/g,'""')+'"'; return s; }
+
+    function exportJSON(){
+      download('assets_export.json', JSON.stringify(db, null, 2));
+    }
+
+    function importFile(file){
+      const reader = new FileReader();
+      reader.onload = e=>{
+        const txt = e.target.result;
+        try{
+          if(file.name.endsWith('.csv')){
+            const parsed = parseCSV(txt);
+            // merge (keep existing ids) or assign ids
+            parsed.forEach(r=>{ if(!r._id) r._id = uid(); db.push(r); });
+          } else {
+            const parsed = JSON.parse(txt);
+            if(Array.isArray(parsed)) parsed.forEach(r=>{ if(!r._id) r._id = uid(); db.push(r); });
+            else if(typeof parsed === 'object') { if(!parsed._id) parsed._id = uid(); db.push(parsed); }
+          }
+          saveDB(); renderList(); alert('Imported.');
+        } catch(err){ alert('Import failed: '+err); }
+      };
+      reader.readAsText(file);
+    }
+
+    function parseCSV(txt){
+      // very small CSV parser (assumes header row)
+      const lines = txt.split(/\r?\n/).filter(l=>l.trim().length>0);
+      if(lines.length<1) return [];
+      const headers = csvSplit(lines[0]);
+      const out = [];
+      for(let i=1;i<lines.length;i++){
+        const cols = csvSplit(lines[i]);
+        const obj = {};
+        headers.forEach((h,idx)=>{ obj[h]=cols[idx]||''; });
+        out.push(obj);
+      }
+      return out;
+    }
+    function csvSplit(line){
+      const res = []; let cur=''; let inQuotes=false;
+      for(let i=0;i<line.length;i++){
+        const ch = line[i];
+        if(inQuotes){ if(ch==='"'){ if(line[i+1]==='"'){ cur+='"'; i++; } else inQuotes=false; } else cur+=ch; }
+        else { if(ch==='"'){ inQuotes=true; } else if(ch===','){ res.push(cur); cur=''; } else cur+=ch; }
+      }
+      res.push(cur); return res;
+    }
+
+    // wire up events
+    document.getElementById('addFieldBtn').onclick = ()=>{
+      const key = prompt('Field key (no spaces, used as CSV column name):');
+      if(!key) return; const label = prompt('Label (human friendly):', key) || key;
+      const type = confirm('Make this a larger text area? OK = textarea, Cancel = single-line') ? 'textarea' : 'text';
+      schema.push({key:key.replace(/\s+/g,'_'), label, type}); saveSchema(); renderForm();
+    };
+    document.getElementById('saveAssetBtn').onclick = saveAsset;
+    document.getElementById('clearFormBtn').onclick = ()=>{ if(confirm('Clear current form?')){ currentEditingId=null; currentIdEl.textContent='(new)'; formFieldsEl.querySelectorAll('input,textarea').forEach(i=>i.value=''); renderQRForCurrent(); } };
+    document.getElementById('exportCSV').onclick = exportCSV;
+    document.getElementById('exportJSON').onclick = exportJSON;
+    document.getElementById('importFile').onchange = (e)=>{ const f = e.target.files[0]; if(f) importFile(f); e.target.value=''; };
+    document.getElementById('downloadQR').onclick = ()=>{
+      const link = document.createElement('a'); link.href = qrcanvas.toDataURL('image/png'); link.download = (currentEditingId||'asset') + '.png'; link.click(); };
+    document.getElementById('downloadAssetJSON').onclick = ()=>{
+      const record = db.find(r=>r._id===currentEditingId) || addDefaultValues(readForm());
+      download((currentEditingId||'asset')+'.json', JSON.stringify(record,null,2)); };
+
+    embedInQR.onchange = ()=> renderQRForCurrent();
+
+    // init
+    (function init(){
+      renderForm(); renderList(); renderQRForCurrent();
+      // populate with recent item if any
+      if(db.length>0) { currentEditingId = db[db.length-1]._id; currentIdEl.textContent = currentEditingId; populateForm(db[db.length-1]); renderQRForCurrent(); }
+    })();
+
+    // Allow pressing Enter in fields to save quickly
+    formFieldsEl.addEventListener('keydown', (e)=>{ if(e.key==='Enter' && (e.ctrlKey||e.metaKey)) { e.preventDefault(); saveAsset(); } });
+
+    // Security: simple escape in display functions earlier
+  </script>
+</body>
+</html>
