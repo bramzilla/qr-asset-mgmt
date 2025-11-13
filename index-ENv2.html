@@ -117,6 +117,21 @@
                 border-radius: 6px;
                 margin-bottom: 12px;
             }
+            #qrcanvas {
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                margin-top: 10px;
+                margin-bottom: 10px;
+                background: #fff;
+                border: 1px solid #ccc;
+                border-radius: 8px;
+                padding: 8px;
+            }
+            #qrcanvas img {
+                max-width: 100%;
+                height: auto;
+            }
         </style>
     </head>
     <body>
@@ -203,7 +218,10 @@
                 <div class="card">
                     <strong>QR / Preview</strong>
                     <div class="qr-wrap" style="margin-top: 10px">
-                        <canvas id="qrcanvas"></canvas>
+                        <div
+                            id="qrcanvas"
+                            style="width: 256px; height: 256px"
+                        ></div>
                         <div class="muted">
                             Scan the QR to view or retrieve the asset. You can
                             choose to embed full data directly in the QR or only
@@ -466,12 +484,7 @@
 
             function renderQRForCurrent() {
                 const qrContainer = document.getElementById("qrcanvas");
-                const ctx = qrContainer.getContext
-                    ? qrContainer.getContext("2d")
-                    : null;
-                if (ctx)
-                    ctx.clearRect(0, 0, qrContainer.width, qrContainer.height);
-                else qrContainer.innerHTML = "";
+                qrContainer.innerHTML = ""; // clear old QR
 
                 if (!currentEditingId) return;
 
@@ -479,33 +492,19 @@
                     db.find((r) => r._id === currentEditingId) ||
                     addDefaultValues(readForm());
 
-                // 🔗 Pas deze URL aan naar je echte GitHub Pages viewer
+                // 🔗 Change this to your own viewer URL
                 const baseUrl =
-                    "https://bramzilla.github.io/qr-asset-mgmt/viewer.html";
-
-                // Encodeer asset als JSON
+                    "https://<your-username>.github.io/asset-viewer/viewer.html";
                 const encodedData = encodeURIComponent(JSON.stringify(record));
                 const fullUrl = `${baseUrl}?data=${encodedData}`;
 
-                // Maak de QR-code
-                const tmp = document.createElement("div");
-                new QRCode(tmp, {
+                // Generate QR inside the div
+                new QRCode(qrContainer, {
                     text: fullUrl,
                     width: 256,
                     height: 256,
-                    correctLevel: QRCode.CorrectLevel.M,
+                    correctLevel: QRCode.CorrectLevel.H,
                 });
-
-                // Teken de QR in het canvas of toon hem direct
-                setTimeout(() => {
-                    const img = tmp.querySelector("img");
-                    if (ctx && img) {
-                        ctx.drawImage(img, 0, 0);
-                    } else {
-                        qrContainer.innerHTML = "";
-                        qrContainer.appendChild(tmp.firstChild);
-                    }
-                }, 100);
 
                 console.log("QR generated for:", fullUrl);
             }
